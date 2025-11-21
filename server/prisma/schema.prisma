@@ -1,0 +1,171 @@
+// Prisma 스키마 파일
+// 데이터베이스: PostgreSQL
+// 참고: https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 사용자 모델
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String?   // OAuth 사용자의 경우 null 가능
+  name          String?
+  profileImage  String?
+  
+  // OAuth 제공자 정보
+  provider      AuthProvider @default(EMAIL)
+  providerId    String?   // Google/Kakao 제공자 ID
+  
+  // 이메일 인증
+  emailVerified Boolean   @default(false)
+  verificationToken String?
+  
+  // 2FA 설정
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String? // TOTP Secret (암호화됨)
+  
+  // 계정 상태
+  isActive      Boolean   @default(true)
+  isLocked      Boolean   @default(false)
+  failedLoginAttempts Int @default(0)
+  lastLoginAt   DateTime?
+  
+  // 타임스탬프
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // 관계
+  sessions      Session[]
+  profile       UserProfile?
+  apiKeys       ApiKey[]
+  
+  @@index([email])
+  @@index([provider, providerId])
+  @@map("users")
+}
+
+// 인증 제공자 Enum
+enum AuthProvider {
+  EMAIL
+  GOOGLE
+  KAKAO
+}
+
+// 세션 모델 (JWT 블랙리스트 및 추적용)
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  token        String   @unique
+  refreshToken String?  @unique
+  
+  // 세션 메타데이터
+  ipAddress    String?
+  userAgent    String?
+  deviceInfo   String?
+  
+  // 만료 및 상태
+  expiresAt    DateTime
+  isRevoked    Boolean  @default(false)
+  lastActivityAt DateTime @default(now())
+  
+  createdAt    DateTime @default(now())
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// 사용자 프로필 (민감한 개인정보)
+model UserProfile {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // 개인정보 (암호화됨)
+  phoneNumber  String?  // 암호화
+  address      String?  // 암호화
+  dateOfBirth  String?  // 암호화
+  
+  // 추가 정보
+  bio          String?
+  website      String?
+  timezone     String?  @default("Asia/Seoul")
+  language     String?  @default("ko")
+  
+  // 알림 설정
+  emailNotifications Boolean @default(true)
+  smsNotifications   Boolean @default(false)
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@map("user_profiles")
+}
+
+// API 키 모델 (암호화 저장)
+model ApiKey {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name         String   // API 키 이름/설명
+  keyHash      String   @unique // API 키 해시값
+  keyPreview   String   // 키의 앞 8자 (표시용)
+  
+  // 권한 및 제한
+  scopes       String[] // ["read", "write", "admin"]
+  rateLimit    Int      @default(100) // 시간당 요청 제한
+  
+  // 상태
+  isActive     Boolean  @default(true)
+  lastUsedAt   DateTime?
+  expiresAt    DateTime?
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([keyHash])
+  @@map("api_keys")
+}
+
+// 2FA 백업 코드
+model TwoFactorBackupCode {
+  id        String   @id @default(uuid())
+  userId    String
+  codeHash  String   // 해시된 백업 코드
+  isUsed    Boolean  @default(false)
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@map("two_factor_backup_codes")
+}
+
+// 감사 로그 (보안 이벤트 추적)
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  action      String   // "LOGIN", "LOGOUT", "PASSWORD_CHANGE" 등
+  resource    String?  // 영향받은 리소스
+  ipAddress   String?
+  userAgent   String?
+  status      String   // "SUCCESS", "FAILURE"
+  metadata    Json?    // 추가 정보
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
